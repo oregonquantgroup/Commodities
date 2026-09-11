@@ -17,20 +17,21 @@ import yfinance as yf
 from gprd_gold_strategy import build_signals, state_machine, backtest
 
 GPRD_URL = "https://www.matteoiacoviello.com/gpr_files/data_gpr_daily_recent.dta"
-START = "2008-01-01"   # same history as the original workbook, so the live period still begins in 2010
-RF = 0.0274            # same risk-free rate the research uses
+GPRD_START = "2008-01-01"   # z-score history the research workbook starts from
+TRADE_START = "2010-01-01"  # its gold and S&P series begin here, so the backtest does too
+RF = 0.0274                 # same risk-free rate the research uses
 OUT = Path(__file__).parent / "site" / "gprd_gold.json"
 
 
 def load_gprd():
     g = pd.read_stata(GPRD_URL)
     g["Date"] = pd.to_datetime(g["DAY"].astype(str), format="%Y%m%d")
-    g = g.loc[g["Date"] >= START, ["Date", "GPRD"]].dropna()
+    g = g.loc[g["Date"] >= GPRD_START, ["Date", "GPRD"]].dropna()
     return g.sort_values("Date").reset_index(drop=True)
 
 
 def load_close(ticker, col):
-    s = yf.Ticker(ticker).history(start=START, auto_adjust=False)["Close"]
+    s = yf.Ticker(ticker).history(start=TRADE_START, auto_adjust=False)["Close"]
     s.index = s.index.tz_localize(None).normalize()
     return s.rename(col).rename_axis("Date").reset_index().dropna()
 
@@ -68,6 +69,10 @@ def main():
     sp = load_close("^GSPC", "SP500_Level")
     for df, name in [(gprd, "GPRD"), (gold, "Gold"), (sp, "S&P 500")]:
         check(df, name)
+
+    # The research workbook keeps every calendar day of GPRD through 2009, then only
+    # trading days. Match it, so the 504-row z-score window means the same thing.
+    gprd = gprd[(gprd["Date"] < TRADE_START) | gprd["Date"].isin(gold["Date"])].reset_index(drop=True)
 
     sigs = state_machine(build_signals(gprd, gold["Date"]))
     res = backtest(gold, sp, sigs)
